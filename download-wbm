@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+
+import json
+import urllib.request
+import sys
+import os
+import shutil
+from html.parser import HTMLParser
+import urllib
+from urllib.parse import urlparse
+from urllib.parse import urljoin
+from bs4 import BeautifulSoup
+
+
+def href_to_filepath(href):
+    filepath = urllib.parse.urlunsplit(('','',href.path[1:],'',''))
+    if not os.path.splitext(filepath)[1]:
+        filepath = os.path.join(filepath,'index.html')
+    return filepath
+
+
+def href_to_relhref(href):
+    if type(href) == str:
+        href = urlparse(href)
+    return urllib.parse.urlunsplit(('','',href.path[1:],href.query,href.fragment))
+
+
+def href_to_abshref(href):
+    return urllib.parse.urlunsplit((href.scheme,href.netloc,href.path,'',''))
+
+
+def href_to_archiveorg_url(href,timestamp):
+    url = 'http://web.archive.org/web/{}id_/{}'.format(timestamp,href)
+    return url
+
+
+def rewrite_hrefs(html):
+    soup = BeautifulSoup(html,'html.parser')
+    for a in soup.findAll('a'):
+        if a.has_attr('href'):
+            href = a['href']
+            if href[-1] == '/':
+                href += 'index.html'
+            href = href_to_relhref(href)
+            a['href'] = href
+    return str(soup)
+
+
+def rewrite_hrefs_in_file(filename):
+    with open(filename,'r') as f:
+        html = f.read()
+        html = rewrite_hrefs(html)
+    with open(filename,'w') as f:
+        f.write(html)
+
+
+class Parser(HTMLParser):
+    def __init__(self,basepath,timestamp,url):
+        super().__init__()
+        self.basepath  = basepath
+        self.timestamp = timestamp
+        self.url = url
+        self.domain = '.'.join(urlparse(url).netloc.split('.')[-2:])
+        print(self.domain)
+
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'a' and 'href' in attrs:
+            href = attrs['href']
+            href = urlparse(href)
+            if not href.netloc.endswith(self.domain):
+                return
+
+            abshref = href_to_abshref(href)
+            url = href_to_archiveorg_url(abshref,self.timestamp)
+            print('url:',url)
+            req = urllib.request.Request(url,method='GET')
+            with urllib.request.urlopen(req,timeout=30) as f:
+                filepath = href_to_filepath(href)
+                if f.headers.get_content_type() == 'text/html':
+                    if not os.path.splitext(filepath)[1]:
+                        filepath = os.path.join(filepath,'index.html')
+                filepath = os.path.join(self.basepath,filepath)
+
+                print('file:',filepath)
+                os.makedirs(os.path.dirname(filepath),exist_ok=True)
+                with open(filepath,'wb') as output:
+                    shutil.copyfileobj(f,output)
+
+
+    def handle_endtag(self, tag):
+        return
+        print('end:',tag)
+
+
+def site_revisions(site):
+    url = 'http://web.archive.org/cdx/search/cdx?url={}&output=json&cl=timestamp'.format(site)
+    req = urllib.request.Request(url,method='GET')
+    with urllib.request.urlopen(req,timeout=30) as f:
+        return json.loads(f.read().decode())
+
+
+def download_page(basepath,timestamp,url):
+    url = 'http://web.archive.org/web/{}id_/{}'.format(timestamp,url)
+    req = urllib.request.Request(url,method='GET')
+    with urllib.request.urlopen(req,timeout=30) as f:
+        return f.read()
+
+
+site = 'http://www.templeos.org'
+basepath = '.'
+revisions = site_revisions(site)
+
+for l in revisions[1:]:
+    timestamp = l[1]
+    url = href_to_archiveorg_url(site,timestamp)
+    print(url)
+    req = urllib.request.Request(url,method='GET')
+    with urllib.request.urlopen(req,timeout=30) as f:
+        timedbasepath = os.path.join(basepath,timestamp)
+        parser = Parser(timedbasepath,timestamp,site)
+        data = f.read().decode()
+        parser.feed(data)
+        sys.exit(0)
