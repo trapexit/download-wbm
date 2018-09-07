@@ -12,11 +12,12 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 
-def href_to_filepath(href):
+def href_to_filepath(href,content_type):
     filepath = urllib.parse.urlunsplit(('','',href.path[1:],'',''))
-    if not os.path.splitext(filepath)[1]:
-        filepath = os.path.join(filepath,'index.html')
-    return filepath
+    if content_type == 'text/html':
+        if not os.path.splitext(filepath)[1]:
+            filepath = os.path.join(filepath,'index.html')
+    return os.path.join(href.netloc,filepath)
 
 
 def href_to_relhref(href):
@@ -61,9 +62,8 @@ class Parser(HTMLParser):
         self.timestamp = timestamp
         self.url = url
         self.domain = '.'.join(urlparse(url).netloc.split('.')[-2:])
-        print(self.domain)
 
-
+        
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag == 'a' and 'href' in attrs:
@@ -77,10 +77,7 @@ class Parser(HTMLParser):
             print('url:',url)
             req = urllib.request.Request(url,method='GET')
             with urllib.request.urlopen(req,timeout=30) as f:
-                filepath = href_to_filepath(href)
-                if f.headers.get_content_type() == 'text/html':
-                    if not os.path.splitext(filepath)[1]:
-                        filepath = os.path.join(filepath,'index.html')
+                filepath = href_to_filepath(href,f.headers.get_content_type())
                 filepath = os.path.join(self.basepath,filepath)
 
                 print('file:',filepath)
